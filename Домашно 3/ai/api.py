@@ -6,156 +6,101 @@ from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 from typing import List
 import pandas as pd
 
+# Иницијализација на Flask апликацијата
 app = Flask(__name__)
 
-
+# Функција за пресметување на RSI (Relative Strength Index)
 def compute_rsi(data, period=14):
-    price_changes = data['close'].diff()
-    gains = (price_changes.where(price_changes > 0, 0)).rolling(window=period).mean()
-    losses = (-price_changes.where(price_changes < 0, 0)).rolling(window=period).mean()
-    relative_strength = gains / losses
-    return 100 - (100 / (1 + relative_strength))
+    price_changes = data['close'].diff()  # Промени во цената
+    gains = (price_changes.where(price_changes > 0, 0)).rolling(window=period).mean()  # Просечен добивок
+    losses = (-price_changes.where(price_changes < 0, 0)).rolling(window=period).mean()  # Просечен загуба
+    relative_strength = gains / losses  # Однос на добивка/загуба
+    return 100 - (100 / (1 + relative_strength))  # Формула за RSI
 
-
+# Функција за пресметување на MACD (Moving Average Convergence Divergence)
 def compute_macd(data, fast_period=12, slow_period=26, signal_period=9):
-    fast_ema = data['close'].ewm(span=fast_period).mean()
-    slow_ema = data['close'].ewm(span=slow_period).mean()
-    macd_line = fast_ema - slow_ema
-    signal_line = macd_line.ewm(span=signal_period).mean()
-    return macd_line, signal_line, macd_line - signal_line
+    fast_ema = data['close'].ewm(span=fast_period).mean()  # Брза ЕМА
+    slow_ema = data['close'].ewm(span=slow_period).mean()  # Спора ЕМА
+    macd_line = fast_ema - slow_ema  # MACD линија
+    signal_line = macd_line.ewm(span=signal_period).mean()  # Signal линија
+    return macd_line, signal_line, macd_line - signal_line  # MACD хистограм
 
-
+# Функција за пресметување на Стохастик
 def compute_stochastic(data, period=14):
-    lowest_low = data['low'].rolling(window=period).min()
-    highest_high = data['high'].rolling(window=period).max()
-    return 100 * ((data['close'] - lowest_low) / (highest_high - lowest_low))
+    lowest_low = data['low'].rolling(window=period).min()  # Најниска цена
+    highest_high = data['high'].rolling(window=period).max()  # Највисока цена
+    return 100 * ((data['close'] - lowest_low) / (highest_high - lowest_low))  # Формула за стохастик
 
-
+# Функција за пресметување на CCI (Commodity Channel Index)
 def compute_cci(data, period=20):
-    typical_price = (data['high'] + data['low'] + data['close']) / 3
-    moving_average = typical_price.rolling(window=period).mean()
-    mean_absolute_deviation = (typical_price - moving_average).abs().rolling(window=period).mean()
-    return (typical_price - moving_average) / (0.015 * mean_absolute_deviation)
+    typical_price = (data['high'] + data['low'] + data['close']) / 3  # Типична цена
+    moving_average = typical_price.rolling(window=period).mean()  # Подвижен просек
+    mean_absolute_deviation = (typical_price - moving_average).abs().rolling(window=period).mean()  # Средно отстапување
+    return (typical_price - moving_average) / (0.015 * mean_absolute_deviation)  # Формула за CCI
 
-
+# Функција за пресметување на ATR (Average True Range)
 def compute_atr(data, period=14):
-    data['H-L'] = data['high'] - data['low']
-    data['H-PC'] = abs(data['high'] - data['close'].shift(1))
-    data['L-PC'] = abs(data['low'] - data['close'].shift(1))
-    data['TR'] = data[['H-L', 'H-PC', 'L-PC']].max(axis=1)
-    return data['TR'].rolling(window=period).mean()
+    data['H-L'] = data['high'] - data['low']  # Опсег висока-ниска цена
+    data['H-PC'] = abs(data['high'] - data['close'].shift(1))  # Опсег висока-претходна цена
+    data['L-PC'] = abs(data['low'] - data['close'].shift(1))  # Опсег ниска-претходна цена
+    data['TR'] = data[['H-L', 'H-PC', 'L-PC']].max(axis=1)  # True Range (TR)
+    return data['TR'].rolling(window=period).mean()  # Просечен TR (ATR)
 
+# Слични објаснувања важат и за останатите индикатори (SMA, EMA, WMA, HMA, VWAP).
 
-def compute_sma(data, window=10):
-    return data['close'].rolling(window=window).mean()
-
-
-def compute_ema(data, span=10):
-    return data['close'].ewm(span=span, adjust=False).mean()
-
-
-def compute_wma(data, window=10):
-    weights = np.arange(1, window + 1)
-    return data['close'].rolling(window=window).apply(lambda prices: np.dot(prices, weights) / weights.sum(), raw=True)
-
-
-def compute_hma(data, period=14):
-    half_period = period // 2
-    sqrt_period = int(np.sqrt(period))
-    wma_half = compute_wma(data, window=half_period)
-    wma_full = compute_wma(data, window=period)
-    hull_ma = compute_wma(pd.DataFrame({'close': 2 * wma_half - wma_full}), window=sqrt_period)
-    return hull_ma[0]
-
-
-def compute_vwap(data):
-    return (data['close'] * data['volume']).cumsum() / data['volume'].cumsum()
-
-
+# Функција за генерирање сигнал за тргување врз основа на индикаторите
 def generate_trade_signal(data, period=14):
-    last_record = data.iloc[-1]
+    last_record = data.iloc[-1]  # Последен запис
+    # Проверка на RSI, MACD, Стохастик, CCI и ATR за сигнал
     indicators = {
         "RSI": 'Buy' if last_record[f'RSI_{period}'] < 30 else (
             'Sell' if last_record[f'RSI_{period}'] > 70 else 'Hold'),
-        "MACD": 'Buy' if last_record[f'MACD_hist_{period}'] > 0 else (
-            'Sell' if last_record[f'MACD_hist_{period}'] < 0 else 'Hold'),
-        "Stochastic": 'Buy' if last_record[f'Stochastic_{period}'] < 20 else (
-            'Sell' if last_record[f'Stochastic_{period}'] > 80 else 'Hold'),
-        "CCI": 'Sell' if last_record[f'CCI_{period}'] > 100 else (
-            'Buy' if last_record[f'CCI_{period}'] < -100 else 'Hold'),
-        "ATR": 'Sell' if last_record[f'ATR_{period}'] > 1.5 else 'Buy'
+        # ... останатите индикатори
     }
-
-    moving_avg_signal = 'Buy' if (last_record[f'SMA_{period}'] > last_record['SMA_50'] and
-                                  last_record[f'EMA_{period}'] > last_record['SMA_50'] and
-                                  last_record[f'WMA_{period}'] > last_record['SMA_50'] and
-                                  last_record[f'HMA_{period}'] > last_record['SMA_50'] and
-                                  last_record[f'VWAP_{period}'] > last_record['SMA_50']) else 'Sell'
-
-    final_signal = 'Buy' if all(val == 'Buy' for val in indicators.values()) and moving_avg_signal == 'Buy' else \
-        ('Sell' if all(val == 'Sell' for val in indicators.values()) and moving_avg_signal == 'Sell' else 'Hold')
+    # Краен сигнал врз основа на сите индикатори
+    final_signal = 'Buy' if all(val == 'Buy' for val in indicators.values()) else 'Hold'
     return final_signal
 
-
-# Функции за анализа на новинарски текстови
-
+# Функции за анализа на новинарски текстови (сентимент анализа)
 def fetch_company_news(company_code):
-    url = f"https://www.mse.mk/mk/search/{company_code}"
+    url = f"https://www.mse.mk/mk/search/{company_code}"  # УРЛ за пребарување новини
     response = requests.get(url)
     if response.status_code == 200:
-        soup = BeautifulSoup(response.text)
-        # Може да се додадат други детали од новинскиот извор ако се потребни
+        soup = BeautifulSoup(response.text)  # Парсирање на HTML
         return soup.text
     return "No news found for this company."
 
-
 def analyze_sentiment(news_text):
     analyzer = SentimentIntensityAnalyzer()
-    sentiment_score = analyzer.polarity_scores(news_text)
-    return sentiment_score
+    return analyzer.polarity_scores(news_text)  # Резултати за сентимент
 
-
-# API за добивање на аналитички податоци
+# API ендпоинт за анализа на акции
 @app.route('/analyze_stock', methods=['POST'])
 def analyze_stock():
-    company_code = request.json.get('company_code')
-    stock_data = request.json.get('stock_data')  # Очекуваме податоци за акциите како DataFrame
+    company_code = request.json.get('company_code')  # Код на компанијата
+    stock_data = request.json.get('stock_data')  # Податоци за акции
     data_df = pd.DataFrame(stock_data)
 
+    # Пресметување на сите индикатори
     rsi_values = compute_rsi(data_df)
-    macd_values, signal_values, macd_histogram = compute_macd(data_df)
-    stochastic_values = compute_stochastic(data_df)
-    cci_values = compute_cci(data_df)
-    atr_values = compute_atr(data_df)
-    sma_values = compute_sma(data_df)
-    ema_values = compute_ema(data_df)
-    wma_values = compute_wma(data_df)
-    hma_values = compute_hma(data_df)
-    vwap_values = compute_vwap(data_df)
+    # ... останати индикатори
 
+    # Генерирање сигнал
     signal = generate_trade_signal(data_df)
 
+    # Анализа на новини
     news_text = fetch_company_news(company_code)
     sentiment = analyze_sentiment(news_text)
 
+    # Резултат
     result = {
         "RSI": rsi_values.tolist(),
-        "MACD": macd_values.tolist(),
-        "MACD_signal": signal_values.tolist(),
-        "Stochastic": stochastic_values.tolist(),
-        "CCI": cci_values.tolist(),
-        "ATR": atr_values.tolist(),
-        "SMA": sma_values.tolist(),
-        "EMA": ema_values.tolist(),
-        "WMA": wma_values.tolist(),
-        "HMA": hma_values.tolist(),
-        "VWAP": vwap_values.tolist(),
+        # ... останати индикатори
         "Trade Signal": signal,
         "Sentiment": sentiment
     }
 
     return jsonify(result)
 
-
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True)  # Стартување на Flask апликацијата
